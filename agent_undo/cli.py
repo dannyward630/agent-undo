@@ -75,7 +75,9 @@ def cmd_log(args: list[str]) -> int:
     parser.add_argument("--path")
     parser.add_argument("--content")
     parser.add_argument("--exit", dest="exit_code", type=int)
-    parsed = parser.parse_args(args)
+    # parse_intermixed_args: the documented form is `log <db> <type> --cmd ...`,
+    # so positionals and optionals interleave.
+    parsed = parser.parse_intermixed_args(args)
 
     db_path = Path(parsed.db_path) if parsed.db_path else get_default_db()
     op_type = parsed.type_opt or parsed.op_type_pos or "manual"
@@ -154,7 +156,9 @@ def cmd_rollback(args: list[str]) -> int:
     parser.add_argument("--to")
     parser.add_argument("--output", default="undo.sh")
     parser.add_argument("--dry-run", dest="dry_run", action="store_true")
-    parsed = parser.parse_args(args)
+    # parse_intermixed_args: `rollback <db> --dry-run <checkpoint>` interleaves
+    # positionals and optionals, which parse_args rejects on Python 3.10/3.11.
+    parsed = parser.parse_intermixed_args(args)
 
     db_path = Path(parsed.db_path) if parsed.db_path else get_default_db()
     checkpoint = parsed.to or parsed.checkpoint_pos
