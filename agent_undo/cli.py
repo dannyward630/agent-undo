@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sys
@@ -11,10 +12,29 @@ from pathlib import Path
 from .journal import Journal
 from .rollback import RollbackGenerator, preview_rollback, simulate_rollback
 
+# Each operation type that cannot be rolled back without a recorded target.
+REQUIRED_FIELD: dict[str, str] = {
+    "shell": "command",
+    "git": "command",
+    "file-write": "path",
+}
+
 
 def get_default_db() -> Path:
     """Resolve the default DB path at call time, not import time."""
     return Path.cwd() / ".agent-undo" / "journal.db"
+
+
+def _db_path(args: list[str]) -> Path:
+    """Resolve the journal path from the first positional arg.
+
+    A token starting with ``--`` is a flag, never a filesystem path: consuming
+    it as the DB path silently writes the journal to a stray file (issues
+    #53 and #56). Callers that need flag semantics parse their own args.
+    """
+    if args and not args[0].startswith("-"):
+        return Path(args[0])
+    return get_default_db()
 
 
 def get_session_id() -> str:
@@ -30,7 +50,7 @@ def get_session_id() -> str:
 
 def cmd_init(args: list[str]) -> int:
     """Initialize agent-undo in the current project."""
-    db_path = Path(args[0]) if args else get_default_db()
+    db_path = _db_path(args)
     journal = Journal(db_path)
     session_id = get_session_id()
     journal.checkpoint(session_id, "session-start")
@@ -40,22 +60,47 @@ def cmd_init(args: list[str]) -> int:
 
 
 def cmd_log(args: list[str]) -> int:
-    """Log an operation manually."""
-    db_path = Path(args[0]) if args else get_default_db()
-    op_type = args[1] if len(args) > 1 else "manual"
+    """Log an operation manually.
+
+    Flags are parsed explicitly; a stray ``--`` token can never be consumed as
+    the database path, and an operation type that needs a recorded target
+    refuses to write a row without it.
+    """
+    parser = argparse.ArgumentParser(prog="agent-undo log")
+    parser.add_argument("db_path", nargs="?")
+    parser.add_argument("op_type_pos", nargs="?")
+    parser.add_argument("--type", dest="type_opt")
+    parser.add_argument("--cmd")
+    parser.add_argument("--path")
+    parser.add_argument("--content")
+    parser.add_argument("--exit", dest="exit_code", type=int)
+    parsed = parser.parse_args(args)
+
+    db_path = Path(parsed.db_path) if parsed.db_path else get_default_db()
+    op_type = parsed.type_opt or parsed.op_type_pos or "manual"
+
+    command = parsed.cmd or os.environ.get("AGENT_UNDO_COMMAND")
+    path = parsed.path or os.environ.get("AGENT_UNDO_PATH")
+    content_before = parsed.content
+    exit_code = (
+        parsed.exit_code
+        if parsed.exit_code is not None
+        else int(os.environ.get("AGENT_UNDO_EXIT_CODE", "0"))
+    )
+
+    required = REQUIRED_FIELD.get(op_type)
+    if required and not {"command": command, "path": path}.get(required):
+        print(f"agent-undo: {op_type} requires --{required}", file=sys.stderr)
+        return 2
 
     journal = Journal(db_path)
     session_id = get_session_id()
-
-    command = os.environ.get("AGENT_UNDO_COMMAND")
-    path = os.environ.get("AGENT_UNDO_PATH")
-    exit_code = int(os.environ.get("AGENT_UNDO_EXIT_CODE", "0"))
-
     op_id = journal.record(
         session_id,
         op_type,
         command=command,
         path=path,
+        content_before=content_before,
         exit_code=exit_code,
     )
     print(f"Recorded {op_type} (id={op_id})")
@@ -64,7 +109,7 @@ def cmd_log(args: list[str]) -> int:
 
 def cmd_timeline(args: list[str]) -> int:
     """Show the operation timeline."""
-    db_path = Path(args[0]) if args else get_default_db()
+    db_path = _db_path(args)
     journal = Journal(db_path)
     session_id = get_session_id()
 
@@ -84,8 +129,14 @@ def cmd_timeline(args: list[str]) -> int:
 
 def cmd_checkpoint(args: list[str]) -> int:
     """Create a named checkpoint."""
-    db_path = Path(args[0]) if args else get_default_db()
-    label = args[1] if len(args) > 1 else "checkpoint"
+    parser = argparse.ArgumentParser(prog="agent-undo checkpoint")
+    parser.add_argument("label_pos", nargs="?")
+    parser.add_argument("--label", dest="label_opt")
+    parser.add_argument("--db")
+    parsed = parser.parse_args(args)
+
+    db_path = Path(parsed.db) if parsed.db else get_default_db()
+    label = parsed.label_opt or parsed.label_pos or "checkpoint"
 
     journal = Journal(db_path)
     session_id = get_session_id()
@@ -96,14 +147,20 @@ def cmd_checkpoint(args: list[str]) -> int:
 
 def cmd_rollback(args: list[str]) -> int:
     """Generate a rollback script or show simulation."""
-    db_path = Path(args[0]) if args else get_default_db()
-    checkpoint = None
-    dry_run = False
-    for arg in args[1:]:
-        if arg == "--dry-run":
-            dry_run = True
-        elif checkpoint is None:
-            checkpoint = arg
+    parser = argparse.ArgumentParser(prog="agent-undo rollback")
+    parser.add_argument("db_path", nargs="?")
+    parser.add_argument("checkpoint_pos", nargs="?")
+    parser.add_argument("--to")
+    parser.add_argument("--output", default="undo.sh")
+    parser.add_argument("--dry-run", dest="dry_run", action="store_true")
+    parsed = parser.parse_args(args)
+
+    db_path = Path(parsed.db_path) if parsed.db_path else get_default_db()
+    checkpoint = parsed.to or parsed.checkpoint_pos
+    if checkpoint and checkpoint.startswith("checkpoint:"):
+        checkpoint = checkpoint[len("checkpoint:"):]
+    dry_run = parsed.dry_run
+    output = parsed.output
 
     journal = Journal(db_path)
     session_id = get_session_id()
@@ -148,11 +205,18 @@ def cmd_rollback(args: list[str]) -> int:
             return 0
         # Use the first operation as target (undo everything after it)
         first_op_id = ops[0]["id"]
-        script = gen.generate(session_id, target_op_id=first_op_id)
+        try:
+            script = gen.generate(session_id, target_op_id=first_op_id)
+        except ValueError as exc:
+            print(f"agent-undo: {exc}", file=sys.stderr)
+            return 1
     else:
-        script = gen.generate(session_id, checkpoint_label=checkpoint)
+        try:
+            script = gen.generate(session_id, checkpoint_label=checkpoint)
+        except ValueError as exc:
+            print(f"agent-undo: {exc}", file=sys.stderr)
+            return 1
 
-    output = "undo.sh"
     Path(output).write_text(script)
     os.chmod(output, 0o755)
     print(f"Rollback script written to {output}")
@@ -161,7 +225,7 @@ def cmd_rollback(args: list[str]) -> int:
 
 def cmd_preview(args: list[str]) -> int:
     """Preview a rollback."""
-    db_path = Path(args[0]) if args else get_default_db()
+    db_path = _db_path(args)
     checkpoint = args[1] if len(args) > 1 else None
     if checkpoint and checkpoint.startswith("checkpoint:"):
         checkpoint = checkpoint[len("checkpoint:"):]
@@ -179,7 +243,7 @@ def cmd_preview(args: list[str]) -> int:
 
 def cmd_stats(args: list[str]) -> int:
     """Show journal statistics."""
-    db_path = Path(args[0]) if args else get_default_db()
+    db_path = _db_path(args)
     journal = Journal(db_path)
     stats = journal.get_statistics()
     print(json.dumps(stats, indent=2))
