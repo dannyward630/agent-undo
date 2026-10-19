@@ -55,3 +55,24 @@ def test_statistics(journal):
     assert stats["total_operations"] == 3
     assert stats["total_sessions"] == 2
     assert stats["by_type"]["file-write"] == 2
+
+
+def test_git_classification_from_json_tool_input(tmp_path, monkeypatch):
+    """Bug #55: Claude Code passes tool_input as JSON, not raw string."""
+    import json
+    from agent_undo.hooks import run_pre_tool_hook, get_session_id
+
+    db_path = tmp_path / "test.db"
+    monkeypatch.setenv("AGENT_UNDO_DB", str(db_path))
+    monkeypatch.chdir(tmp_path)
+
+    git_input = json.dumps({"command": "git commit -m 'test'"})
+    run_pre_tool_hook("Bash", git_input)
+
+    from agent_undo.journal import Journal
+    journal = Journal(db_path)
+    session_id = get_session_id()
+    ops = journal.get_session_ops(session_id)
+    assert len(ops) == 1
+    assert ops[0]["op_type"] == "git"
+    assert ops[0]["command"] == "git commit -m 'test'"

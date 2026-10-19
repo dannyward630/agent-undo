@@ -40,8 +40,18 @@ def run_pre_tool_hook(tool_name: str, tool_input: str) -> None:
     session_id = get_session_id()
 
     path = ""
-    if tool_name == "Bash" and tool_input.startswith("git "):
-        op_type = "git"
+    command = tool_input
+    if tool_name == "Bash":
+        # Claude Code passes tool_input as JSON: {"command": "..."}
+        try:
+            data = json.loads(tool_input)
+            command = data.get("command", tool_input)
+        except (json.JSONDecodeError, TypeError):
+            command = tool_input
+        if command.startswith("git "):
+            op_type = "git"
+        else:
+            op_type = "shell"
     elif tool_name == "Write" or tool_name == "Edit":
         op_type = "file-write"
         # Try to extract path from input
@@ -62,9 +72,8 @@ def run_pre_tool_hook(tool_name: str, tool_input: str) -> None:
             pass
 
     journal.record(
-        session_id,
-        op_type,
-        command=tool_input,
+        session_id, op_type,
+        command=command,
         path=path or None,
         content_before=content_before,
     )
