@@ -60,7 +60,8 @@ def test_statistics(journal):
 def test_git_classification_from_json_tool_input(tmp_path, monkeypatch):
     """Bug #55: Claude Code passes tool_input as JSON, not raw string."""
     import json
-    from agent_undo.hooks import run_pre_tool_hook, get_session_id
+
+    from agent_undo.hooks import get_session_id, run_pre_tool_hook
 
     db_path = tmp_path / "test.db"
     monkeypatch.setenv("AGENT_UNDO_DB", str(db_path))
