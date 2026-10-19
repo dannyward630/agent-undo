@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS operations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id TEXT NOT NULL,
     op_type TEXT NOT NULL,          -- file-write, shell, git, api, checkpoint
-    timestamp REAL NOT NULL,
+    "timestamp" REAL NOT NULL,
     command TEXT,
     path TEXT,
     content_before TEXT,
@@ -28,11 +28,11 @@ CREATE TABLE IF NOT EXISTS checkpoints (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     operation_id INTEGER NOT NULL REFERENCES operations(id),
     label TEXT NOT NULL,
-    timestamp REAL NOT NULL
+    "timestamp" REAL NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_ops_session ON operations(session_id);
-CREATE INDEX IF NOT EXISTS idx_ops_timestamp ON operations(timestamp);
+CREATE INDEX IF NOT EXISTS idx_ops_timestamp ON operations("timestamp");
 CREATE INDEX IF NOT EXISTS idx_ops_type ON operations(op_type);
 """
 
@@ -76,7 +76,7 @@ class Journal:
         with self.transaction() as conn:
             cur = conn.execute(
                 """INSERT INTO operations
-                   (session_id, op_type, timestamp, command, path,
+                   (session_id, op_type, "timestamp", command, path,
                     content_before, content_after, exit_code, metadata, parent_id)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
@@ -101,13 +101,13 @@ class Journal:
             if op_id is None:
                 # Create a checkpoint-type operation
                 cur = conn.execute(
-                    "INSERT INTO operations (session_id, op_type, timestamp, command)"
+                    'INSERT INTO operations (session_id, op_type, "timestamp", command)'
                     " VALUES (?, 'checkpoint', ?, ?)",
                     (session_id, ts, label),
                 )
                 op_id = cur.lastrowid
             conn.execute(
-                "INSERT INTO checkpoints (operation_id, label, timestamp) VALUES (?, ?, ?)",
+                'INSERT INTO checkpoints (operation_id, label, "timestamp") VALUES (?, ?, ?)',
                 (op_id, label, ts),
             )
             return op_id
@@ -117,13 +117,13 @@ class Journal:
         with self.transaction() as conn:
             if op_type:
                 rows = conn.execute(
-                    "SELECT * FROM operations"
-                    " WHERE session_id = ? AND op_type = ? ORDER BY timestamp",
+                    'SELECT * FROM operations'
+                    ' WHERE session_id = ? AND op_type = ? ORDER BY "timestamp"',
                     (session_id, op_type),
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT * FROM operations WHERE session_id = ? ORDER BY timestamp",
+                    'SELECT * FROM operations WHERE session_id = ? ORDER BY "timestamp"',
                     (session_id,),
                 ).fetchall()
             return [dict(r) for r in rows]
@@ -136,7 +136,7 @@ class Journal:
                    FROM operations o
                    LEFT JOIN checkpoints c ON c.operation_id = o.id
                    WHERE o.session_id = ?
-                   ORDER BY o.timestamp""",
+                   ORDER BY o."timestamp" """,
                 (session_id,),
             ).fetchall()
             return [dict(r) for r in rows]
@@ -148,7 +148,7 @@ class Journal:
                 """SELECT c.operation_id FROM checkpoints c
                    JOIN operations o ON o.id = c.operation_id
                    WHERE o.session_id = ? AND c.label = ?
-                   ORDER BY c.timestamp DESC LIMIT 1""",
+                   ORDER BY c."timestamp" DESC LIMIT 1""",
                 (session_id, label),
             ).fetchone()
             return row["operation_id"] if row else None
@@ -157,7 +157,7 @@ class Journal:
         """Get all operations after a given operation id (exclusive)."""
         with self.transaction() as conn:
             row = conn.execute(
-                "SELECT timestamp FROM operations WHERE id = ?", (since_op_id,)
+                'SELECT "timestamp" FROM operations WHERE id = ?', (since_op_id,)
             ).fetchone()
             if not row:
                 return []
@@ -166,8 +166,8 @@ class Journal:
                 """SELECT o.*, c.label as checkpoint_label
                    FROM operations o
                    LEFT JOIN checkpoints c ON c.operation_id = o.id
-                   WHERE o.session_id = ? AND o.timestamp >= ? AND o.id != ?
-                   ORDER BY o.timestamp DESC""",
+                   WHERE o.session_id = ? AND o."timestamp" >= ? AND o.id != ?
+                   ORDER BY o."timestamp" DESC""",
                 (session_id, ts, since_op_id),
             ).fetchall()
             return [dict(r) for r in rows]
