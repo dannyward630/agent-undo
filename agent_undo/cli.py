@@ -9,6 +9,7 @@ import sys
 import uuid
 from pathlib import Path
 
+from .hooks import run_post_tool_hook, run_pre_tool_hook, shell_wrapper
 from .journal import Journal
 from .rollback import RollbackGenerator, preview_rollback, simulate_rollback
 
@@ -241,6 +242,38 @@ def cmd_preview(args: list[str]) -> int:
     return 0
 
 
+def cmd_record(args: list[str]) -> int:
+    """Record a tool use from a hook (Claude Code preToolUse/postToolUse)."""
+    parser = argparse.ArgumentParser(prog="agent-undo record")
+    parser.add_argument("--tool", required=True)
+    parser.add_argument("--input")
+    parser.add_argument("--output")
+    parser.add_argument("--exit", dest="exit_code", type=int)
+    parsed = parser.parse_args(args)
+
+    if parsed.input is not None:
+        run_pre_tool_hook(parsed.tool, parsed.input)
+    else:
+        run_post_tool_hook(
+            parsed.tool,
+            parsed.output or "",
+            parsed.exit_code if parsed.exit_code is not None else 0,
+        )
+    return 0
+
+
+def cmd_wrap(args: list[str]) -> int:
+    """Run an agent command with shell-level operation recording."""
+    parser = argparse.ArgumentParser(prog="agent-undo wrap")
+    parser.add_argument("agent_cmd", nargs=argparse.REMAINDER)
+    parsed = parser.parse_args(args)
+    agent_cmd = parsed.agent_cmd[1:] if parsed.agent_cmd[:1] == ["--"] else parsed.agent_cmd
+    if not agent_cmd:
+        print("agent-undo: wrap requires a command to run", file=sys.stderr)
+        return 2
+    return shell_wrapper(agent_cmd)
+
+
 def cmd_stats(args: list[str]) -> int:
     """Show journal statistics."""
     db_path = _db_path(args)
@@ -257,6 +290,8 @@ COMMANDS = {
     "checkpoint": cmd_checkpoint,
     "rollback": cmd_rollback,
     "preview": cmd_preview,
+    "record": cmd_record,
+    "wrap": cmd_wrap,
     "stats": cmd_stats,
 }
 

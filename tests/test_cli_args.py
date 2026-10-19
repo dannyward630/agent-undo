@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 
 import pytest
@@ -13,7 +14,8 @@ def _rows(db) -> list[tuple]:
     con = sqlite3.connect(db)
     try:
         return con.execute(
-            'SELECT id, op_type, "command", path FROM operations'
+            'SELECT o.id, o.op_type, o."command", o.path, c.label '
+            "FROM operations o LEFT JOIN checkpoints c ON c.operation_id = o.id"
         ).fetchall()
     finally:
         con.close()
@@ -86,3 +88,39 @@ def test_rollback_writes_the_requested_output_file(tmp_path, monkeypatch):
     assert main(["rollback", "--output", "out.sh"]) == 0
     assert (tmp_path / "out.sh").exists()
     assert not (tmp_path / "--output").exists()
+
+
+def test_record_pre_tool_hook_is_journaled(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    assert main(["init"]) == 0
+    payload = json.dumps({"command": "git commit -m 'refactor auth'"})
+    assert main(["record", "--tool", "Bash", "--input", payload]) == 0
+
+    rows = _rows(tmp_path / ".agent-undo" / "journal.db")
+    assert any(r[1] == "git" and r[2] == "git commit -m 'refactor auth'" for r in rows)
+
+
+def test_record_post_tool_hook_is_journaled(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    assert main(["init"]) == 0
+    assert main(["record", "--tool", "Bash", "--output", "ok", "--exit", "0"]) == 0
+
+    rows = _rows(tmp_path / ".agent-undo" / "journal.db")
+    assert any(r[1] == "tool-result" for r in rows)
+
+
+def test_wrap_records_the_wrapped_command(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    assert main(["init"]) == 0
+    assert main(["wrap", "--", "true"]) == 0
+
+    rows = _rows(tmp_path / ".agent-undo" / "journal.db")
+    assert any(r[1] == "shell" and r[2] == "true" for r in rows)
+    assert any(r[1] == "checkpoint" and r[4] == "wrap-start" for r in rows)
+
+
+def test_wrap_without_a_command_is_a_usage_error(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    assert main(["init"]) == 0
+    assert main(["wrap"]) == 2
+    assert "requires a command" in capsys.readouterr().err
