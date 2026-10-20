@@ -33,3 +33,4 @@ Thumbs.db
 *.db
 *.sqlite3
 .agent-undo/
+uv.lock
