@@ -187,3 +187,15 @@ class Journal:
                 "total_sessions": sessions,
                 "by_type": {r["op_type"]: r["cnt"] for r in types},
             }
+
+    def close(self) -> None:
+        """Close the underlying SQLite connection."""
+        if self._conn is not None:
+            self._conn.close()
+            self._conn = None
+
+    def __enter__(self) -> Journal:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()

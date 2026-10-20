@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 
 from agent_undo.journal import Journal
@@ -77,3 +79,33 @@ def test_git_classification_from_json_tool_input(tmp_path, monkeypatch):
     assert len(ops) == 1
     assert ops[0]["op_type"] == "git"
     assert ops[0]["command"] == "git commit -m 'test'"
+
+
+def test_journal_close_releases_connection(journal):
+    """#76: close() must actually close the underlying SQLite handle."""
+    conn = journal._conn
+    journal.close()
+    assert journal._conn is None
+    with pytest.raises(sqlite3.ProgrammingError):
+        conn.execute("SELECT 1")
+
+
+def test_journal_close_is_idempotent(journal):
+    journal.close()
+    journal.close()  # must not raise
+
+
+def test_journal_context_manager_closes(tmp_path):
+    with Journal(tmp_path / "cm.db") as j:
+        j.record("s", "shell", command="echo hi")
+        assert j._conn is not None
+    assert j._conn is None
+
+
+def test_journal_reopen_after_close(tmp_path):
+    j = Journal(tmp_path / "re.db")
+    j.record("s", "shell", command="a")
+    j.close()
+    j2 = Journal(tmp_path / "re.db")
+    assert len(j2.get_session_ops("s")) == 1
+    j2.close()

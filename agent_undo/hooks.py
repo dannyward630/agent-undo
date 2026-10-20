@@ -26,7 +26,9 @@ def get_session_id() -> str:
     """Get or create a session ID for this agent-undo session."""
     sf = get_session_file()
     if sf.exists():
-        return sf.read_text().strip()
+        existing = sf.read_text().strip()
+        if existing:
+            return existing
     session_id = f"sess-{uuid.uuid4().hex[:12]}"
     sf.parent.mkdir(parents=True, exist_ok=True)
     sf.write_text(session_id)

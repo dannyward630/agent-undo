@@ -34,3 +34,15 @@ def test_get_default_db_reflects_chdir(tmp_path, monkeypatch):
     db = get_default_db()
     assert db.parent == tmp_path / ".agent-undo"
     assert db.name == "journal.db"
+
+
+def test_get_session_id_regenerates_empty_session_file(tmp_path, monkeypatch):
+    """#77: an empty session file must not yield an empty (colliding) session ID."""
+    monkeypatch.chdir(tmp_path)
+    sf = tmp_path / ".agent-undo" / "session"
+    sf.parent.mkdir(parents=True)
+    sf.write_text("   \n")
+    session_id = hooks.get_session_id()
+    assert session_id
+    assert re.fullmatch(r"sess-[0-9a-f]{12}", session_id)
+    assert sf.read_text().strip() == session_id

@@ -4,9 +4,20 @@ from __future__ import annotations
 
 import base64
 import json
+import shlex
 from dataclasses import dataclass
 
 from .journal import Journal
+
+
+def _q(value: str) -> str:
+    """Quote an arbitrary value so it is one safe bash word."""
+    return shlex.quote(value)
+
+
+def _comment(value: str) -> str:
+    """Neutralise newlines so a value cannot break out of a bash comment."""
+    return str(value).replace("\r", " ").replace("\n", " ")
 
 
 class RollbackGenerator:
@@ -38,7 +49,7 @@ class RollbackGenerator:
         lines = [
             "#!/bin/bash",
             "# agent-undo rollback script",
-            f"# Session: {session_id}",
+            f"# Session: {_comment(session_id)}",
             f"# Rolling back {len(ops)} operations",
             "set -euo pipefail",
             "",
@@ -90,13 +101,13 @@ class RollbackGenerator:
         """Generate undo commands for a single operation."""
         op_type = op["op_type"]
         detail = op.get("command") or op.get("path") or op.get("checkpoint_label", "")
-        lines = [f"# [{op_type}] {detail}"]
+        lines = [f"# [{op_type}] {_comment(detail)}"]
 
         if op_type == "file-write" and op.get("content_before") is not None:
-            path = op["path"]
-            lines.append(f"if [ -f '{path}' ]; then")
+            path = _q(op["path"])
+            lines.append(f"if [ -f {path} ]; then")
             encoded = base64.b64encode(op["content_before"].encode()).decode()
-            lines.append(f"  echo '{encoded}' | base64 -d > '{path}'")
+            lines.append(f"  echo '{encoded}' | base64 -d > {path}")
             lines.append("fi")
 
         elif op_type == "shell" and op.get("command"):
@@ -106,25 +117,27 @@ class RollbackGenerator:
             if undo_cmd:
                 lines.append(f"  {undo_cmd}")
             else:
-                lines.append(f"# Manual review needed: {op['command']}")
+                lines.append(f"# Manual review needed: {_comment(op['command'])}")
 
         elif op_type == "git":
             cmd = op.get("command", "")
             if cmd.startswith("git commit"):
-                lines.append(f"git reset --soft HEAD~1  # Undo: {cmd}")
+                lines.append(f"git reset --soft HEAD~1  # Undo: {_comment(cmd)}")
             elif cmd.startswith("git push"):
-                lines.append(f"# WARNING: Remote push cannot be auto-undone: {cmd}")
+                lines.append(f"# WARNING: Remote push cannot be auto-undone: {_comment(cmd)}")
                 lines.append("# Consider: git push --force-with-lease origin <previous-ref>")
             elif cmd.startswith("git branch -D"):
-                lines.append(f"# Deleted branch cannot be recovered from journal alone: {cmd}")
+                lines.append(
+                    f"# Deleted branch cannot be recovered from journal alone: {_comment(cmd)}"
+                )
             else:
-                lines.append(f"# Manual review needed: {cmd}")
+                lines.append(f"# Manual review needed: {_comment(cmd)}")
 
         elif op_type == "checkpoint":
-            lines.append(f"# Checkpoint: {op.get('checkpoint_label', '(unnamed)')}")
+            lines.append(f"# Checkpoint: {_comment(op.get('checkpoint_label', '(unnamed)'))}")
 
         elif op_type == "api":
-            lines.append(f"# API call: {op.get('metadata', 'no metadata')}")
+            lines.append(f"# API call: {_comment(op.get('metadata', 'no metadata'))}")
 
         else:
             lines.append(f"# Unknown op type: {op_type}")
