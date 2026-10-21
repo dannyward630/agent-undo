@@ -2,6 +2,12 @@
 
 # agent-undo
 
+[![CI](https://github.com/yunaremaia/agent-undo/actions/workflows/ci.yml/badge.svg)](https://github.com/yunaremaia/agent-undo/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/yunaremaia/agent-undo)](https://github.com/yunaremaia/agent-undo/blob/main/LICENSE)
+[![Release](https://img.shields.io/github/v/release/yunaremaia/agent-undo)](https://github.com/yunaremaia/agent-undo/releases/latest)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![Stars](https://img.shields.io/github/stars/yunaremaia/agent-undo)](https://github.com/yunaremaia/agent-undo)
+
 > Record and rollback AI agent operations — file writes, shell commands, git ops, API calls. Time-machine for AI agent actions.
 
 AI agents are writing code, running commands, pushing to git, and calling APIs. When something goes wrong, you need to know *what happened* and *how to undo it*.
